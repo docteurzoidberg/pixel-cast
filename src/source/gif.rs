@@ -22,6 +22,7 @@ pub struct GifSource {
     starts: Vec<Duration>,
     total: Duration,
     repeat: Repeat,
+    name: String,
 }
 
 impl GifSource {
@@ -69,6 +70,7 @@ impl GifSource {
             starts,
             total,
             repeat,
+            name: format!("gif {} ({fit})", path.display()),
         })
     }
 
@@ -92,6 +94,19 @@ impl GifSource {
 impl Source for GifSource {
     fn frame(&mut self, t: Duration) -> Result<Option<&[u8]>, SourceError> {
         Ok(self.index_at(t).map(|i| self.frames[i].as_slice()))
+    }
+
+    fn describe(&self) -> String {
+        let repeat = match self.repeat {
+            Repeat::Loop => "loop",
+            Repeat::Once => "once",
+        };
+        format!(
+            "{}: {} frames, {:.2} s, {repeat}",
+            self.name,
+            self.frames.len(),
+            self.total.as_secs_f64()
+        )
     }
 }
 

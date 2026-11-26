@@ -90,23 +90,20 @@ impl Sender {
         }
     }
 
-    /// Sends one packet of `universe`; returns the datagrams sent (one per unicast host).
-    pub fn send(&self, universe: u16, packet: &[u8]) -> Result<usize, SendError> {
-        let mut sent = 0;
-        match &self.route {
-            Route::Unicast(addresses) => {
-                for address in addresses {
-                    self.send_to(packet, *address)?;
-                    sent += 1;
+    /// Sends one packet of `universe` to each of its addresses, going on after a failure: returns the datagrams
+    /// sent, the datagrams that failed and the last failure.
+    pub fn send(&self, universe: u16, packet: &[u8]) -> (usize, usize, Option<SendError>) {
+        let (mut sent, mut failed, mut error) = (0, 0, None);
+        for address in self.addresses(universe) {
+            match self.send_to(packet, address) {
+                Ok(()) => sent += 1,
+                Err(e) => {
+                    failed += 1;
+                    error = Some(e);
                 }
             }
-            Route::Multicast { port } => {
-                let group = SocketAddrV4::new(sacn::multicast_group(universe), *port);
-                self.send_to(packet, SocketAddr::V4(group))?;
-                sent += 1;
-            }
         }
-        Ok(sent)
+        (sent, failed, error)
     }
 
     fn send_to(&self, packet: &[u8], address: SocketAddr) -> Result<(), SendError> {
@@ -190,6 +187,8 @@ pub struct Sent {
     pub datagrams: usize,
     /// Universes left out because their data had not changed (§6.6.2).
     pub suppressed: usize,
+    /// UDP datagrams the system refused to send.
+    pub errors: usize,
 }
 
 impl std::ops::AddAssign for Sent {
@@ -197,6 +196,7 @@ impl std::ops::AddAssign for Sent {
         self.packets += other.packets;
         self.datagrams += other.datagrams;
         self.suppressed += other.suppressed;
+        self.errors += other.errors;
     }
 }
 
@@ -208,6 +208,7 @@ pub struct Stream {
     geometry: Geometry,
     universes: Vec<UniverseState>,
     buffer: Vec<u8>,
+    last_error: Option<SendError>,
 }
 
 impl Stream {
@@ -226,6 +227,7 @@ impl Stream {
             geometry,
             universes: geometry.universes().map(UniverseState::new).collect(),
             buffer: Vec::with_capacity(sacn::HEADER_LEN + sacn::MAX_CHANNELS),
+            last_error: None,
         }
     }
 
@@ -233,12 +235,31 @@ impl Stream {
         self.geometry
     }
 
+    /// The last send failure since the previous call, if any: failures do not stop the stream (a network can come
+    /// back), they are counted in [`Sent::errors`].
+    pub fn take_error(&mut self) -> Option<SendError> {
+        self.last_error.take()
+    }
+
+    fn send(&mut self, universe: u16, sent: &mut Sent) -> bool {
+        let (ok, failed, error) = self.sender.send(universe, &self.buffer);
+        sent.packets += 1;
+        sent.datagrams += ok;
+        sent.errors += failed;
+        if error.is_some() {
+            self.last_error = error;
+        }
+        ok > 0
+    }
+
     /// Sends an RGB picture of the stream's size, as of `now`: each universe whose data changed, or that is due a
     /// repeat or a keep-alive.
-    pub fn send_frame(&mut self, frame: &[u8], now: Instant) -> Result<Sent, SendError> {
+    ///
+    /// A universe whose packet could not be sent at all is sent again at the next call.
+    pub fn send_frame(&mut self, frame: &[u8], now: Instant) -> Sent {
         let mut sent = Sent::default();
-        for (state, (universe, values)) in self.universes.iter_mut().zip(self.geometry.split(frame))
-        {
+        for (i, (universe, values)) in self.geometry.split(frame).enumerate() {
+            let state = &mut self.universes[i];
             debug_assert_eq!(state.universe, universe);
             if !state.is_due(values, now) {
                 sent.suppressed += 1;
@@ -254,21 +275,23 @@ impl Stream {
                 values,
             )
             .expect("the geometry keeps universes and lengths in range");
-            sent.datagrams += self.sender.send(universe, &self.buffer)?;
-            sent.packets += 1;
-            state.record(values, now);
+            if self.send(universe, &mut sent) {
+                self.universes[i].record(values, now);
+            }
         }
-        Ok(sent)
+        sent
     }
 
     /// Ends the stream: three stream-terminated packets per universe (§6.2.6).
     ///
     /// The standard has receivers ignore their values, but some receivers ignore the option bit instead and apply
     /// the values as a frame: the packets carry the last values sent, so that such a display keeps its picture.
-    pub fn terminate(&mut self) -> Result<Sent, SendError> {
+    pub fn terminate(&mut self) -> Sent {
         let mut sent = Sent::default();
         for _ in 0..TERMINATION_PACKETS {
-            for state in &mut self.universes {
+            for i in 0..self.universes.len() {
+                let state = &mut self.universes[i];
+                let universe = state.universe;
                 let sequence = state.next_sequence();
                 let values = std::mem::take(&mut state.last_values);
                 sacn::write_data_packet(
@@ -281,11 +304,10 @@ impl Stream {
                 )
                 .expect("the geometry keeps universes and lengths in range");
                 state.last_values = values;
-                sent.datagrams += self.sender.send(state.universe, &self.buffer)?;
-                sent.packets += 1;
+                self.send(universe, &mut sent);
             }
         }
-        Ok(sent)
+        sent
     }
 }
 

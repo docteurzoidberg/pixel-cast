@@ -18,6 +18,9 @@ pub trait Source {
     ///
     /// Calls come with `t` increasing.
     fn frame(&mut self, t: Duration) -> Result<Option<&[u8]>, SourceError>;
+
+    /// What the source shows, for reports: `pattern grid, chase (10 s each)`, `gif a.gif (12 frames, 1.2 s, loop)`.
+    fn describe(&self) -> String;
 }
 
 /// Whether a finite source starts again at its end.

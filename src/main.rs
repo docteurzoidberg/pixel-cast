@@ -8,16 +8,20 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use pixel_cast::clock::Clock;
 use pixel_cast::fit::{Color, Fit};
+use pixel_cast::report::{self, EndReason, Mode, Reporter, Totals};
 use pixel_cast::sacn::Cid;
-use pixel_cast::sender::{SendError, Sent, Stream};
+use pixel_cast::sender::{SendError, Stream};
 use pixel_cast::source::gif::GifSource;
 use pixel_cast::source::image::ImageSource;
 use pixel_cast::source::pattern::{Pattern, PatternSource};
 use pixel_cast::source::video::{FFMPEG, VideoSource};
 use pixel_cast::source::{Repeat, Source, SourceError};
-use pixel_cast::target::{self, Destination, Hosts, Target, TargetError, TargetSpec, Targets};
+use pixel_cast::target::{self, Hosts, Target, TargetError, TargetSpec, Targets};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -81,6 +85,15 @@ struct Cli {
     /// Stop after this long, such as 30s, 500ms or 2m [default: when the source ends].
     #[arg(long, global = true, value_parser = parse_duration)]
     duration: Option<Duration>,
+    /// Send a black frame before the end of the stream.
+    #[arg(long, global = true)]
+    blackout: bool,
+    /// Prepare everything (target, files, ffmpeg) and print what would be sent, without sending.
+    #[arg(long, global = true)]
+    dry_run: bool,
+    /// Status as JSON lines on stdout: start, progress once a second, end or error.
+    #[arg(long, global = true)]
+    json: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -215,22 +228,91 @@ impl From<SendError> for Failure {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match run(&cli) {
+    let mut reporter = Reporter::new(Mode::new(cli.json));
+    match run(&cli, &mut reporter) {
         Ok(()) => ExitCode::SUCCESS,
         Err(failure) => {
-            eprintln!("pixel-cast: {failure}");
+            reporter.error(failure.code(), &failure.to_string());
             ExitCode::from(failure.code())
         }
     }
 }
 
-fn run(cli: &Cli) -> Result<(), Failure> {
+fn run(cli: &Cli, reporter: &mut Reporter) -> Result<(), Failure> {
     if let Command::Targets = cli.command {
         return list_targets(cli);
     }
-    let target = resolve_target(cli)?;
+    let target = resolve_target(cli, reporter)?;
+    let mut source = open_source(cli, &target)?;
+
+    if cli.dry_run {
+        // the first frame proves the source decodes (for a video: that ffmpeg runs)
+        if source.frame(Duration::ZERO)?.is_none() {
+            return Err(Failure::File(format!("{}: no frame", source.describe())));
+        }
+        report::dry_run(cli.json, &target, &source.describe());
+        return Ok(());
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let stop = Arc::clone(&stop);
+        if let Err(error) = ctrlc::set_handler(move || stop.store(true, Ordering::SeqCst)) {
+            reporter.warning(&format!("Ctrl+C will not end the stream cleanly: {error}"));
+        }
+    }
+
+    let mut stream = Stream::open(&target)?;
+    reporter.start(&target, &source.describe());
+    let mut clock = Clock::new(target.fps, Instant::now());
+    let mut totals = Totals::default();
+    let mut last_error: Option<String> = None;
+    let reason = loop {
+        if stop.load(Ordering::SeqCst) {
+            break EndReason::Signal;
+        }
+        let tick = clock.wait();
+        totals.skipped += tick.skipped;
+        if stop.load(Ordering::SeqCst) {
+            break EndReason::Signal;
+        }
+        if cli.duration.is_some_and(|limit| tick.at >= limit) {
+            break EndReason::Duration;
+        }
+        let Some(frame) = source.frame(tick.at)? else {
+            break EndReason::SourceEnded;
+        };
+        totals.sent += stream.send_frame(frame, Instant::now());
+        totals.frames += 1;
+        totals.elapsed = clock.start().elapsed();
+        let error = stream.take_error().map(|e| e.to_string());
+        if error.is_some() {
+            last_error = error.clone();
+        }
+        reporter.progress(&totals, error.as_deref());
+    };
+    if cli.blackout {
+        let black = vec![0; target.geometry.frame_len()];
+        totals.sent += stream.send_frame(&black, Instant::now());
+    }
+    totals.sent += stream.terminate();
+    totals.elapsed = clock.start().elapsed();
+    if let Some(error) = stream.take_error() {
+        last_error = Some(error.to_string());
+    }
+    reporter.end(&totals, reason, last_error.as_deref());
+    if totals.sent.datagrams == 0 && totals.sent.errors > 0 {
+        return Err(Failure::Network(format!(
+            "nothing could be sent: {}",
+            last_error.unwrap_or_default()
+        )));
+    }
+    Ok(())
+}
+
+fn open_source(cli: &Cli, target: &Target) -> Result<Box<dyn Source>, Failure> {
     let size = target.geometry.size();
-    let mut source: Box<dyn Source> = match &cli.command {
+    Ok(match &cli.command {
         Command::Pattern { patterns, each } => Box::new(PatternSource::new(
             Pattern::parse_list(patterns)?,
             *each,
@@ -255,36 +337,11 @@ fn run(cli: &Cli) -> Result<(), Failure> {
             cli.background,
             repeat.or(Repeat::Once),
         )?),
-        Command::Targets => unreachable!("handled above"),
-    };
-    let mut stream = Stream::open(&target)?;
-    eprintln!("pixel-cast: {}", describe(&target));
-
-    let mut clock = Clock::new(target.fps, Instant::now());
-    let mut sent = Sent::default();
-    let mut frames = 0u64;
-    loop {
-        let tick = clock.wait();
-        if cli.duration.is_some_and(|limit| tick.at >= limit) {
-            break;
-        }
-        let Some(frame) = source.frame(tick.at)? else {
-            break;
-        };
-        sent += stream.send_frame(frame, Instant::now())?;
-        frames += 1;
-    }
-    sent += stream.terminate()?;
-    eprintln!(
-        "pixel-cast: {frames} frames, {} packets in {:.1} s",
-        sent.packets,
-        clock.start().elapsed().as_secs_f64()
-    );
-    Ok(())
+        Command::Targets => unreachable!("handled before"),
+    })
 }
 
-/// The target of `-t`, if any, under the command-line options.
-fn resolve_target(cli: &Cli) -> Result<Target, Failure> {
+fn resolve_target(cli: &Cli, reporter: &mut Reporter) -> Result<Target, Failure> {
     let options = TargetSpec {
         host: (!cli.host.is_empty()).then(|| Hosts::Many(cli.host.clone())),
         multicast: cli.multicast.then_some(true),
@@ -313,7 +370,7 @@ fn resolve_target(cli: &Cli) -> Result<Target, Failure> {
         }
         None => options,
     };
-    Ok(spec.resolve(machine_cid(cli))?)
+    Ok(spec.resolve(machine_cid(cli, reporter))?)
 }
 
 fn load_targets(cli: &Cli) -> Result<Targets, Failure> {
@@ -330,14 +387,14 @@ fn load_targets(cli: &Cli) -> Result<Targets, Failure> {
 }
 
 /// `--cid`, or the one kept for this machine; a random one, with a warning, when it cannot be kept.
-fn machine_cid(cli: &Cli) -> Cid {
+fn machine_cid(cli: &Cli, reporter: &mut Reporter) -> Cid {
     if let Some(cid) = cli.cid {
         return cid;
     }
     match target::default_cid_path().map(|path| target::load_or_create_cid(&path)) {
         Some(Ok(cid)) => cid,
         Some(Err(error)) => {
-            eprintln!("pixel-cast: warning: {error}; using a new CID for this run");
+            reporter.warning(&format!("{error}; using a new CID for this run"));
             Cid::random()
         }
         None => Cid::random(),
@@ -357,42 +414,11 @@ fn list_targets(cli: &Cli) -> Result<(), Failure> {
     }
     for (name, spec) in targets.iter() {
         match spec.resolve(Cid([0; 16])) {
-            Ok(target) => println!("{name}: {}", describe(&target)),
+            Ok(target) => println!("{name}: {}", report::describe(&target)),
             Err(error) => println!("{name}: invalid: {error}"),
         }
     }
     Ok(())
-}
-
-fn describe(target: &Target) -> String {
-    let destination = match &target.destination {
-        Destination::Unicast { hosts, port } => format!("{}, port {port}", hosts.join(", ")),
-        Destination::Multicast {
-            port,
-            ttl,
-            interface,
-        } => format!(
-            "multicast, port {port}, TTL {ttl}{}",
-            interface
-                .map(|i| format!(", interface {i}"))
-                .unwrap_or_default()
-        ),
-    };
-    let geometry = target.geometry;
-    let first = geometry.first_universe();
-    let last = first as usize + geometry.universe_count() - 1;
-    let universes = if last == first as usize {
-        format!("universe {first}")
-    } else {
-        format!("universes {first}-{last}")
-    };
-    format!(
-        "{destination}; {} in {universes} of {} lights; {} fps; priority {}",
-        geometry.size(),
-        geometry.lights_per_universe(),
-        target.fps,
-        target.source.priority()
-    )
 }
 
 #[cfg(test)]

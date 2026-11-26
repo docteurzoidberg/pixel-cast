@@ -5,6 +5,7 @@
 pub mod clock;
 pub mod fit;
 pub mod geometry;
+pub mod report;
 pub mod sacn;
 pub mod sender;
 pub mod source;

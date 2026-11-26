@@ -12,6 +12,7 @@ categories = ["command-line-utilities", "multimedia"]
 
 [dependencies]
 clap = { version = "4.6.10", features = ["derive"] }
+ctrlc = { version = "3.5.3", features = ["termination"] }
 directories = "6.0.0"
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "bmp", "webp", "gif"] }
 serde = { version = "1.0.229", features = ["derive"] }

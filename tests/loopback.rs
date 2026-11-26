@@ -86,7 +86,7 @@ fn the_receiver_rebuilds_the_picture() {
         .map(|i| (i * 31 % 251) as u8)
         .collect();
 
-    let sent = stream.send_frame(&frame, Instant::now()).unwrap();
+    let sent = stream.send_frame(&frame, Instant::now());
     assert_eq!((sent.packets, sent.datagrams, sent.suppressed), (73, 73, 0));
 
     let mut rebuilt = vec![0u8; frame.len()];
@@ -110,24 +110,18 @@ fn unchanged_frames_are_suppressed_then_kept_alive_and_the_end_is_signalled() {
 
     // three identical frames go out, the fourth is suppressed
     for i in 0..4 {
-        let sent = stream
-            .send_frame(&frame, start + Duration::from_millis(i * 33))
-            .unwrap();
+        let sent = stream.send_frame(&frame, start + Duration::from_millis(i * 33));
         assert_eq!(sent.packets, if i < 3 { 2 } else { 0 }, "frame {i}");
     }
     // a change in the second universe only
     *frame.last_mut().unwrap() = 99;
-    let sent = stream
-        .send_frame(&frame, start + Duration::from_millis(150))
-        .unwrap();
+    let sent = stream.send_frame(&frame, start + Duration::from_millis(150));
     assert_eq!((sent.packets, sent.suppressed), (1, 1));
     // a keep-alive for the first universe once 900 ms have passed since its last packet
-    let sent = stream
-        .send_frame(&frame, start + Duration::from_millis(66 + 900))
-        .unwrap();
+    let sent = stream.send_frame(&frame, start + Duration::from_millis(66 + 900));
     assert_eq!(sent.packets, 2); // universe 1: keep-alive; universe 2: its second repeat
 
-    let terminated = stream.terminate().unwrap();
+    let terminated = stream.terminate();
     assert_eq!(terminated.packets, 6);
 
     let packets = receiver.receive(3 * 2 + 1 + 2 + 6);

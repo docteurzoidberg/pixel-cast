@@ -11,6 +11,7 @@ use crate::geometry::Size;
 
 pub struct ImageSource {
     frame: Vec<u8>,
+    description: String,
 }
 
 impl ImageSource {
@@ -18,6 +19,12 @@ impl ImageSource {
         let picture = decode(path)?;
         Ok(ImageSource {
             frame: fit::fit(&picture, size, fit, background),
+            description: format!(
+                "image {} ({}x{}, {fit})",
+                path.display(),
+                picture.width(),
+                picture.height()
+            ),
         })
     }
 }
@@ -25,6 +32,10 @@ impl ImageSource {
 impl Source for ImageSource {
     fn frame(&mut self, _t: Duration) -> Result<Option<&[u8]>, SourceError> {
         Ok(Some(&self.frame))
+    }
+
+    fn describe(&self) -> String {
+        self.description.clone()
     }
 }
 

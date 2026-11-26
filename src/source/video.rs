@@ -24,6 +24,7 @@ pub struct VideoSource {
     frame: Vec<u8>,
     frames_read: u64,
     ended: bool,
+    description: String,
 }
 
 impl VideoSource {
@@ -79,6 +80,14 @@ impl VideoSource {
             frame: vec![0; size.lights() * 3],
             frames_read: 0,
             ended: false,
+            description: format!(
+                "video {} (ffmpeg, {fit}, {})",
+                path.display(),
+                match repeat {
+                    Repeat::Loop => "loop",
+                    Repeat::Once => "once",
+                }
+            ),
         })
     }
 
@@ -140,6 +149,10 @@ impl Source for VideoSource {
             }
         }
         Ok(if self.ended { None } else { Some(&self.frame) })
+    }
+
+    fn describe(&self) -> String {
+        self.description.clone()
     }
 }
 

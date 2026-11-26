@@ -315,6 +315,19 @@ impl Source for PatternSource {
         pattern.draw(&self.geometry, into.as_secs_f64(), &mut self.frame);
         Ok(Some(&self.frame))
     }
+
+    fn describe(&self) -> String {
+        let names: Vec<String> = self.patterns.iter().map(Pattern::to_string).collect();
+        if self.patterns.len() == 1 {
+            format!("pattern {}", names[0])
+        } else {
+            format!(
+                "pattern {} ({} s each)",
+                names.join(", "),
+                self.each.as_secs_f64()
+            )
+        }
+    }
 }
 
 #[cfg(test)]
