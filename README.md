@@ -7,7 +7,8 @@ A command-line tool that streams test patterns, still images, GIFs and videos to
 - Still images (PNG, JPEG, BMP, WebP), animated GIFs, and videos through ffmpeg; fitted to the matrix.
 - Any size and universe layout; LEDs wired in rows or columns, straight or serpentine, from any corner.
 - Unicast to one or more hosts, or multicast.
-- Follows ANSI E1.31-2025: priorities, sequence numbers, keep-alive of unchanged data, clean end of stream.
+- Follows ANSI E1.31-2025: priorities, sequence numbers, keep-alive of unchanged data, universe discovery, clean
+  end of stream.
 - For other programs: JSON status lines, stable exit codes, `--duration`, `--dry-run`, SIGTERM handled.
 
 **Status**: under development, no release yet; build it from source (below). See [`PLAN.md`](PLAN.md) for the
@@ -179,6 +180,9 @@ Common 8x32 panels, for instance, are usually `serpentine-columns` from the top-
 - **Unchanged data**: as E1.31 §6.6.2 requires, a universe whose values do not change is sent three times, then
   once every 900 ms as a keep-alive, so a still image costs about one packet per universe per second, and receivers
   never drop the source (they do after 2.5 s of silence).
+- **Universe discovery**: every 10 s, a packet lists the stream's universes (E1.31 §4.3), so that monitoring tools
+  such as sACNView show the source; it goes to the discovery group 239.255.250.214 in multicast, to the same hosts
+  in unicast. Receivers that do not use it ignore it.
 - **Priorities**: every packet carries `--priority`. A receiver that follows the standard shows, for each universe,
   the source with the highest priority: a stream at 150 takes over one at 100 without stopping it, and the lower
   one is shown again when the higher one ends. Because a still background is only kept alive, it can take up to

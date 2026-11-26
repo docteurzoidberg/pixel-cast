@@ -52,17 +52,26 @@ impl Receiver {
         self.socket.local_addr().unwrap().port()
     }
 
-    fn receive(&self, count: usize) -> Vec<Received> {
+    /// The next packet, whatever it is.
+    fn raw(&self) -> Vec<u8> {
         let mut buffer = [0u8; 1500];
-        (0..count)
-            .map(|_| {
-                let (len, _) = self
-                    .socket
-                    .recv_from(&mut buffer)
-                    .expect("a packet before the timeout");
-                parse(&buffer[..len])
-            })
-            .collect()
+        let (len, _) = self
+            .socket
+            .recv_from(&mut buffer)
+            .expect("a packet before the timeout");
+        buffer[..len].to_vec()
+    }
+
+    /// The next `count` data packets; universe discovery packets in between are left out.
+    fn receive(&self, count: usize) -> Vec<Received> {
+        let mut packets = Vec::new();
+        while packets.len() < count {
+            let packet = self.raw();
+            if packet[18..22] != [0, 0, 0, 8] {
+                packets.push(parse(&packet));
+            }
+        }
+        packets
     }
 }
 
@@ -163,4 +172,52 @@ fn a_serpentine_matrix_receives_its_leds_in_wiring_order() {
     let leds: Vec<u8> = packet.values.chunks(3).map(|rgb| rgb[0]).collect();
     // the second row runs back: LEDs 3, 4, 5 show lights 5, 4, 3
     assert_eq!(leds, [0, 1, 2, 5, 4, 3]);
+}
+
+#[test]
+fn the_stream_lists_its_universes_for_monitors() {
+    let receiver = Receiver::bind();
+    let mut stream = stream_to(&receiver, "192x64");
+    let frame = vec![1u8; stream.geometry().frame_len()];
+    let start = Instant::now();
+    stream.send_frame(&frame, start);
+    // a universe discovery packet comes first: universes 1 to 73, page 0 of 0
+    let discovery = receiver.raw();
+    assert_eq!(
+        &discovery[18..22],
+        &[0, 0, 0, 8],
+        "VECTOR_ROOT_E131_EXTENDED"
+    );
+    assert_eq!(
+        &discovery[40..44],
+        &[0, 0, 0, 2],
+        "VECTOR_E131_EXTENDED_DISCOVERY"
+    );
+    assert_eq!(
+        &discovery[114..118],
+        &[0, 0, 0, 1],
+        "VECTOR_UNIVERSE_DISCOVERY_UNIVERSE_LIST"
+    );
+    assert_eq!((discovery[118], discovery[119]), (0, 0));
+    let universes: Vec<u16> = discovery[120..]
+        .chunks(2)
+        .map(|b| u16::from_be_bytes([b[0], b[1]]))
+        .collect();
+    assert_eq!(universes, (1..=73).collect::<Vec<u16>>());
+    receiver.receive(73);
+    // not again before 10 s, again after
+    stream.send_frame(&frame, start + Duration::from_secs(5));
+    stream.send_frame(&frame, start + Duration::from_secs(10));
+    let mut discoveries = 0;
+    receiver
+        .socket
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut buffer = [0u8; 1500];
+    while let Ok((len, _)) = receiver.socket.recv_from(&mut buffer) {
+        if buffer[..len][18..22] == [0, 0, 0, 8] {
+            discoveries += 1;
+        }
+    }
+    assert_eq!(discoveries, 1);
 }

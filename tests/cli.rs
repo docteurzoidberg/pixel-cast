@@ -13,6 +13,11 @@ fn pixel_cast(args: &[&str]) -> Command {
     command
 }
 
+/// A universe discovery packet (root vector VECTOR_ROOT_E131_EXTENDED), sent every 10 s beside the data.
+fn is_discovery(packet: &[u8]) -> bool {
+    packet.len() >= 22 && packet[18..22] == [0, 0, 0, 8]
+}
+
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("pixel-cast-cli-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -32,6 +37,9 @@ fn stream(args: &[&str]) -> (Output, Vec<u8>) {
     let mut options = Vec::new();
     let mut buffer = [0u8; 1500];
     while let Ok((len, _)) = receiver.recv_from(&mut buffer) {
+        if is_discovery(&buffer[..len]) {
+            continue;
+        }
         assert!(len >= 126);
         assert_eq!(
             &buffer[22..38],
@@ -341,7 +349,9 @@ fn blackout_ends_on_a_black_frame() {
     let mut packets = Vec::new();
     let mut buffer = [0u8; 1500];
     while let Ok((len, _)) = receiver.recv_from(&mut buffer) {
-        packets.push((buffer[112], buffer[126..len].to_vec()));
+        if !is_discovery(&buffer[..len]) {
+            packets.push((buffer[112], buffer[126..len].to_vec()));
+        }
     }
     let white = vec![255; 48];
     let black = vec![0; 48];
@@ -394,8 +404,8 @@ fn sigterm_ends_the_stream_cleanly() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("stopped after"));
     let mut ends = 0;
     let mut buffer = [0u8; 1500];
-    while receiver.recv_from(&mut buffer).is_ok() {
-        if buffer[112] == 0x40 {
+    while let Ok((len, _)) = receiver.recv_from(&mut buffer) {
+        if !is_discovery(&buffer[..len]) && buffer[112] == 0x40 {
             ends += 1;
         }
     }

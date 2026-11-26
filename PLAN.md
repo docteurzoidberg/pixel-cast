@@ -9,7 +9,8 @@ them.
 
 **Status (2026-11-26)**: steps 1 to 4 done; step 5 under way on a real receiver (an ESP32 with an 8 x 8 serpentine
 WS2812B matrix, ESPHome's E1.31 effect with source arbitration): takeover and end of sources, keep-alive of still
-pictures, priorities, Ctrl+C, and the serpentine wiring all work.
+pictures, priorities, Ctrl+C, and the serpentine wiring all work. sACNView lists the source from its universe
+discovery packets (unicast; multicast from WSL does not reach Windows applications on the same PC).
 
 ## Decisions
 
@@ -93,6 +94,9 @@ priority = 100
   Unchanged data follows §6.6.2 of the standard: three identical packets, then one keep-alive packet every 800 to
   1000 ms (sequence still counting), never silence: receivers drop a source after 2.5 s without packets. A still
   image therefore costs about one packet per universe per second.
+- **Universe discovery** (§4.3, §12): every 10 s, the list of the stream's universes, so that monitors such as
+  sACNView list the source without joining every group; to the discovery group 239.255.250.214 in multicast, to the
+  same hosts in unicast. Added 2026-11-26 after testing with sACNView, which lists sources from these packets only.
 - **Fitting**: `--fit contain | cover | stretch`, `--background` colour, a good downscaling filter (matrices are
   small).
 - **End**: three packets with the "stream terminated" bit (E1.31 §6.2.6) at the end or on Ctrl+C. They carry the

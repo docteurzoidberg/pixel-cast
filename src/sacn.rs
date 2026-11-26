@@ -23,6 +23,9 @@ pub const HEADER_LEN: usize = 126;
 
 const ACN_PACKET_IDENTIFIER: &[u8; 12] = b"ASC-E1.17\0\0\0";
 const VECTOR_ROOT_E131_DATA: u32 = 0x0000_0004;
+const VECTOR_ROOT_E131_EXTENDED: u32 = 0x0000_0008;
+const VECTOR_E131_EXTENDED_DISCOVERY: u32 = 0x0000_0002;
+const VECTOR_UNIVERSE_DISCOVERY_UNIVERSE_LIST: u32 = 0x0000_0001;
 const VECTOR_E131_DATA_PACKET: u32 = 0x0000_0002;
 const VECTOR_DMP_SET_PROPERTY: u8 = 0x02;
 const DMP_ADDRESS_AND_DATA_TYPE: u8 = 0xa1;
@@ -200,6 +203,61 @@ fn flags_and_length(length: usize) -> [u8; 2] {
     (FLAGS | length as u16).to_be_bytes()
 }
 
+/// The universe universe discovery packets go to (Annex A): its multicast group is 239.255.250.214.
+pub const DISCOVERY_UNIVERSE: u16 = 64214;
+/// How often a source lists its universes (Annex A, E131_UNIVERSE_DISCOVERY_INTERVAL).
+pub const DISCOVERY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+/// Universes listed in one discovery packet (Table 4-3).
+pub const UNIVERSES_PER_DISCOVERY_PAGE: usize = 512;
+
+/// The universe discovery packets of a source (§4.3, Table 4-3): its universes, sorted, in pages of at most 512.
+///
+/// Every source has to send them every [`DISCOVERY_INTERVAL`], so that monitors can list the active universes
+/// without joining every multicast group.
+pub fn discovery_packets(source: &Source, universes: &[u16]) -> Vec<Vec<u8>> {
+    let mut sorted = universes.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let pages: Vec<&[u16]> = if sorted.is_empty() {
+        vec![&[]]
+    } else {
+        sorted.chunks(UNIVERSES_PER_DISCOVERY_PAGE).collect()
+    };
+    let last_page = (pages.len() - 1) as u8;
+    pages
+        .iter()
+        .enumerate()
+        .map(|(page, list)| {
+            let length = 120 + 2 * list.len();
+            let mut out = Vec::with_capacity(length);
+            // Root layer
+            out.extend_from_slice(&0x0010u16.to_be_bytes());
+            out.extend_from_slice(&0x0000u16.to_be_bytes());
+            out.extend_from_slice(ACN_PACKET_IDENTIFIER);
+            out.extend_from_slice(&flags_and_length(length - 16));
+            out.extend_from_slice(&VECTOR_ROOT_E131_EXTENDED.to_be_bytes());
+            out.extend_from_slice(&source.cid.0);
+            // Framing layer
+            out.extend_from_slice(&flags_and_length(length - 38));
+            out.extend_from_slice(&VECTOR_E131_EXTENDED_DISCOVERY.to_be_bytes());
+            let mut name = [0u8; 64];
+            name[..source.name.len()].copy_from_slice(source.name.as_bytes());
+            out.extend_from_slice(&name);
+            out.extend_from_slice(&[0; 4]); // reserved
+            // Universe discovery layer
+            out.extend_from_slice(&flags_and_length(length - 112));
+            out.extend_from_slice(&VECTOR_UNIVERSE_DISCOVERY_UNIVERSE_LIST.to_be_bytes());
+            out.push(page as u8);
+            out.push(last_page);
+            for universe in *list {
+                out.extend_from_slice(&universe.to_be_bytes());
+            }
+            debug_assert_eq!(out.len(), length);
+            out
+        })
+        .collect()
+}
+
 /// The multicast group of a universe: 239.255.<high byte>.<low byte>.
 pub fn multicast_group(universe: u16) -> std::net::Ipv4Addr {
     let [high, low] = universe.to_be_bytes();
@@ -358,6 +416,50 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a.0[6] >> 4, 4);
         assert_eq!(a.0[8] >> 6, 0b10);
+    }
+
+    #[test]
+    fn discovery_packets_follow_table_4_3() {
+        let packets = discovery_packets(&source(), &[3, 1, 2, 2]);
+        assert_eq!(packets.len(), 1);
+        let packet = &packets[0];
+        assert_eq!(packet.len(), 120 + 3 * 2);
+        // Root layer
+        assert_eq!(be16(packet, 0), 0x0010);
+        assert_eq!(&packet[4..16], b"ASC-E1.17\0\0\0");
+        assert_eq!(be16(packet, 16), 0x7000 | (126 - 16));
+        assert_eq!(be32(packet, 18), 0x0000_0008);
+        assert_eq!(&packet[22..38], &source().cid().0);
+        // Framing layer
+        assert_eq!(be16(packet, 38), 0x7000 | (126 - 38));
+        assert_eq!(be32(packet, 40), 0x0000_0002);
+        assert_eq!(&packet[44..54], b"pixel-cast");
+        assert_eq!(&packet[108..112], &[0; 4]);
+        // Universe discovery layer: page 0 of 0, universes sorted, without duplicates
+        assert_eq!(be16(packet, 112), 0x7000 | (126 - 112));
+        assert_eq!(be32(packet, 114), 0x0000_0001);
+        assert_eq!((packet[118], packet[119]), (0, 0));
+        assert_eq!(&packet[120..], &[0, 1, 0, 2, 0, 3]);
+    }
+
+    #[test]
+    fn many_universes_take_several_discovery_pages() {
+        let universes: Vec<u16> = (1..=600).collect();
+        let packets = discovery_packets(&source(), &universes);
+        assert_eq!(packets.len(), 2);
+        assert_eq!((packets[0][118], packets[0][119]), (0, 1));
+        assert_eq!((packets[1][118], packets[1][119]), (1, 1));
+        assert_eq!(packets[0].len(), 120 + 512 * 2);
+        assert_eq!(packets[1].len(), 120 + 88 * 2);
+        assert_eq!(be16(&packets[1], 120), 513);
+        // no universe: one empty page
+        let empty = discovery_packets(&source(), &[]);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].len(), 120);
+        assert_eq!(
+            multicast_group(DISCOVERY_UNIVERSE),
+            std::net::Ipv4Addr::new(239, 255, 250, 214)
+        );
     }
 
     #[test]

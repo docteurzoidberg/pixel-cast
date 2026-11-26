@@ -210,6 +210,9 @@ pub struct Stream {
     buffer: Vec<u8>,
     /// The frame in wiring order, when the wiring is not the picture's own order.
     wired: Vec<u8>,
+    /// Universe discovery packets (§4.3), and when they are next due.
+    discovery: Vec<Vec<u8>>,
+    next_discovery: Option<Instant>,
     last_error: Option<SendError>,
 }
 
@@ -223,6 +226,7 @@ impl Stream {
     }
 
     pub fn new(sender: Sender, source: Source, geometry: Geometry) -> Self {
+        let discovery = sacn::discovery_packets(&source, &geometry.universes().collect::<Vec<_>>());
         Stream {
             sender,
             source,
@@ -230,6 +234,8 @@ impl Stream {
             universes: geometry.universes().map(UniverseState::new).collect(),
             buffer: Vec::with_capacity(sacn::HEADER_LEN + sacn::MAX_CHANNELS),
             wired: Vec::new(),
+            discovery,
+            next_discovery: None,
             last_error: None,
         }
     }
@@ -242,6 +248,18 @@ impl Stream {
     /// back), they are counted in [`Sent::errors`].
     pub fn take_error(&mut self) -> Option<SendError> {
         self.last_error.take()
+    }
+
+    /// Lists the stream's universes every 10 s (§4.3), on the same route as the data: the discovery group in
+    /// multicast, the same hosts in unicast. Failures are left out of the counts: discovery is for monitors.
+    fn send_discovery(&mut self, now: Instant) {
+        if self.next_discovery.is_some_and(|next| now < next) {
+            return;
+        }
+        for packet in &self.discovery {
+            let _ = self.sender.send(sacn::DISCOVERY_UNIVERSE, packet);
+        }
+        self.next_discovery = Some(now + sacn::DISCOVERY_INTERVAL);
     }
 
     fn send(&mut self, universe: u16, sent: &mut Sent) -> bool {
@@ -262,6 +280,7 @@ impl Stream {
     /// A universe whose packet could not be sent at all is sent again at the next call.
     pub fn send_frame(&mut self, frame: &[u8], now: Instant) -> Sent {
         let mut sent = Sent::default();
+        self.send_discovery(now);
         let mut wired = std::mem::take(&mut self.wired);
         let frame = self.geometry.to_wiring_order(frame, &mut wired);
         for (i, (universe, values)) in self.geometry.split(frame).enumerate() {
