@@ -7,8 +7,8 @@ cron jobs, automation or agent servers) as much as by people.
 pixel-cast is standalone and generic: it knows E1.31 and the geometry of a matrix, nothing about the receiver behind
 them.
 
-**Status (2026-11-26)**: step 1 under way: local repository, Cargo skeleton, MIT license and CI written; the GitHub
-repository is not created yet.
+**Status (2026-11-26)**: step 1 done (public repository, Cargo skeleton, MIT license, CI green on Linux, Windows
+and macOS); step 2 next.
 
 ## Decisions
 
@@ -152,7 +152,7 @@ caller that may start several streams should queue them itself.
 
 ## Steps
 
-- [ ] 1. Create the `docteurzoidberg/pixel-cast` repository (public, MIT; Cargo, CI: fmt, clippy, tests).
+- [x] 1. Create the `docteurzoidberg/pixel-cast` repository (public, MIT; Cargo, CI: fmt, clippy, tests).
 - [ ] 2. Core: E1.31 packets, universe splitting, geometry and channels, TOML targets, unicast and multicast
       sending; byte-for-byte packet tests.
 - [ ] 3. Sources: test patterns (`--each` to chain several), still image, GIF (`--loop` / `--once`), video through
