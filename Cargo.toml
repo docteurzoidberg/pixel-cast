@@ -1,0 +1,13 @@
+[package]
+name = "pixel-cast"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Stream test patterns, images, GIFs and videos to LED matrices over E1.31 (sACN)"
+license = "MIT"
+repository = "https://github.com/docteurzoidberg/pixel-cast"
+readme = "README.md"
+keywords = ["sacn", "e131", "dmx", "led", "matrix"]
+categories = ["command-line-utilities", "multimedia"]
+
+[dependencies]
