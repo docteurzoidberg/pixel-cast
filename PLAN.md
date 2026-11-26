@@ -188,7 +188,7 @@ caller that may start several streams should queue them itself.
 - [x] 4. Output and shutdown: `--json`, exit codes, `--duration`, clean end of stream, `--blackout`, `--dry-run`,
       `--priority`.
 - [ ] 5. Real tests: a software receiver first, then real hardware.
-- [ ] 6. Multi-platform releases (`cargo-dist`), Docker image, README.
+- [ ] 6. Multi-platform releases (`cargo-dist`), Docker image, README (README written 2026-11-26).
 
 ## After the first version
 
