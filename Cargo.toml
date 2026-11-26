@@ -11,3 +11,7 @@ keywords = ["sacn", "e131", "dmx", "led", "matrix"]
 categories = ["command-line-utilities", "multimedia"]
 
 [dependencies]
+directories = "6.0.0"
+serde = { version = "1.0.229", features = ["derive"] }
+socket2 = "0.6.5"
+toml = "1.2.3"

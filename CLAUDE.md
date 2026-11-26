@@ -28,7 +28,9 @@ as work lands; record any new decision there (with its date), not only in the co
   there.
 - The binary must stay self-contained and statically linkable (musl): no linked C library. Video goes through
   `ffmpeg` as a subprocess, only for the `video` source.
-- E1.31 packets are hand-written (E1.31-2016). Keep packet building pure (no I/O) so it can be tested byte for byte.
+- E1.31 packets are hand-written (ANSI E1.31-2025). Keep packet building pure (no I/O) so it can be tested byte for byte.
+- The standard's PDF, when the user has downloaded it, is in `docs/standard/` (git-ignored: it is copyrighted). Check
+  packet layout and section numbers against it; never commit it or quote long passages of it.
 - Output contract for other programs, to keep stable once released:
   - stdout carries only machine output (`--json` lines, `--dry-run` report); human messages go to stderr;
   - exit codes: 0 normal end, 2 usage, 3 unreadable file, 4 network, 5 ffmpeg missing or failed;

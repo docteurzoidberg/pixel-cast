@@ -7,8 +7,8 @@ cron jobs, automation or agent servers) as much as by people.
 pixel-cast is standalone and generic: it knows E1.31 and the geometry of a matrix, nothing about the receiver behind
 them.
 
-**Status (2026-11-26)**: step 1 done (public repository, Cargo skeleton, MIT license, CI green on Linux, Windows
-and macOS); step 2 next.
+**Status (2026-11-26)**: steps 1 and 2 done: the library sends pictures (E1.31 packets, universes, TOML targets,
+unicast and multicast, suppression of unchanged data); the command line is still a placeholder. Step 3 next.
 
 ## Decisions
 
@@ -20,6 +20,7 @@ and macOS); step 2 next.
 | Language of the repository | English everywhere: code, comments, messages, documentation, commits |
 | First version | the command line: test patterns (one or several, animated, looping), still image, GIF and video (looping or once) |
 | Receiver modes | not pixel-cast's business: it sends E1.31, whatever the receiver does with it |
+| Wiring and colour order | the receiver's job (decision of 2026-11-26): pixel-cast always sends rows from the top-left corner, in RGB; wiring options wait until a receiver needs them (see "After the first version") |
 
 ## First version: the command line
 
@@ -60,25 +61,28 @@ port = 5568
 size = "192x64"
 universe = 1               # first universe
 lights_per_universe = 170
-channels = "rgb"           # rgb, grb, rgbw…
-layout = "rows"            # rows, serpentine; origin, flip, rotate
 fps = 30
 priority = 100
 ```
 
 ### Sending
 
-- **Packets**: E1.31-2016 data packets; the picture is split into universes of `lights_per_universe` lights,
-  index = y × width + x for `rows` (the usual layout of E1.31 matrix receivers).
+- **Packets**: E1.31-2025 data packets (Table 4-1; see `docs/standard/README.md`); the picture is split into universes of `lights_per_universe` lights, three
+  channels (R, G, B) each, light index = y × width + x from the top-left corner (the usual layout of E1.31 matrix
+  receivers; mapping to the physical wiring is the receiver's job).
 - **Destination**: unicast (one or more addresses) or multicast (`239.255.<hi>.<lo>` per universe), configurable TTL
   and outgoing interface.
 - **Header**: source name (`--source-name`, default `pixel-cast`), priority (`--priority`, default 100), a CID that
-  stays the same on a given machine, one sequence counter per universe.
+  stays the same on a given machine (kept in the per-platform data folder, `~/.local/share/pixel-cast/cid` on
+  Linux), one sequence counter per universe.
 - **Pacing**: `--fps`, a fixed-deadline clock without drift (30 fps × 73 universes for 192 × 64 ≈ 2,200 packets/s).
-  A still image is resent at a low rate (5 fps, say): sACN receivers drop a source after 2.5 s without packets.
+  Unchanged data follows §6.6.2 of the standard: three identical packets, then one keep-alive packet every 800 to
+  1000 ms (sequence still counting), never silence: receivers drop a source after 2.5 s without packets. A still
+  image therefore costs about one packet per universe per second.
 - **Fitting**: `--fit contain | cover | stretch`, `--background` colour, a good downscaling filter (matrices are
   small).
-- **End**: three packets with the "stream terminated" bit (E1.31 §6.2.6) at the end or on Ctrl+C. Optionally,
+- **End**: three packets with the "stream terminated" bit (E1.31 §6.2.6) at the end or on Ctrl+C. They carry the
+  last values sent: the standard has receivers ignore them, but some receivers ignore the bit and apply the values. Optionally,
   `--blackout` sends a black frame first; without it, what the display shows next is up to the receiver.
 
 ### For other programs
@@ -95,7 +99,8 @@ priority = 100
 src/
   main.rs        command line (clap), exit codes
   target.rs      TOML targets, merged with the options
-  geometry.rs    size, wiring, channel order: RGB picture -> DMX values per universe
+  lib.rs         the modules below, as a library (tested on their own)
+  geometry.rs    size and universes: RGB picture -> DMX values per universe
   sacn.rs        E1.31 packets (data, stream terminated), sequences, CID
   sender.rs      sockets (socket2): unicast, multicast, TTL, interface
   clock.rs       fixed-deadline pacing
@@ -153,7 +158,7 @@ caller that may start several streams should queue them itself.
 ## Steps
 
 - [x] 1. Create the `docteurzoidberg/pixel-cast` repository (public, MIT; Cargo, CI: fmt, clippy, tests).
-- [ ] 2. Core: E1.31 packets, universe splitting, geometry and channels, TOML targets, unicast and multicast
+- [x] 2. Core: E1.31 packets, universe splitting (size and universes), TOML targets, unicast and multicast
       sending; byte-for-byte packet tests.
 - [ ] 3. Sources: test patterns (`--each` to chain several), still image, GIF (`--loop` / `--once`), video through
       ffmpeg (`--loop` / `--once`), fitting.
@@ -164,6 +169,8 @@ caller that may start several streams should queue them itself.
 
 ## After the first version
 
+- Wiring and colour order on the sender's side, for receivers that pour DMX channels straight into a strip:
+  `layout` (rows, serpentine), origin, flip, rotate, `channels` (rgb, grb, rgbw…).
 - Raw frames on stdin (`pixel-cast -t wall raw --stdin`), for picture generators.
 - Server mode: JSON commands (show, colour, stop) on stdin or over HTTP, one process for many streams.
 - MCP server: pixel-cast as an agent's own tool.

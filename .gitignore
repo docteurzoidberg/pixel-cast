@@ -3,3 +3,6 @@
 # Local, machine-specific notes and settings
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Copyrighted standards, kept locally only (see docs/standard/README.md)
+docs/standard/*.pdf
