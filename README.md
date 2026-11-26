@@ -11,7 +11,7 @@ A command-line tool that streams test patterns, still images, GIFs and videos to
   end of stream.
 - For other programs: JSON status lines, stable exit codes, `--duration`, `--dry-run`, SIGTERM handled.
 
-**Status**: under development, no release yet; build it from source (below). See [`PLAN.md`](PLAN.md) for the
+**Status**: under development, no release yet: build it from source for now (below). See [`PLAN.md`](PLAN.md) for the
 design and the roadmap.
 
 ## Install
@@ -23,6 +23,25 @@ cargo install --git https://github.com/docteurzoidberg/pixel-cast
 ```
 
 Videos need [ffmpeg](https://ffmpeg.org/download.html) on the `PATH`; everything else works without it.
+
+Once released, each [release](https://github.com/docteurzoidberg/pixel-cast/releases) carries ready-made binaries:
+Linux x86_64 and ARM64 (static, no dependency: PC, server, Raspberry Pi), Windows x86_64, macOS ARM64 and x86_64.
+
+### Docker
+
+Two images, for amd64 and arm64: `ghcr.io/docteurzoidberg/pixel-cast` (the binary alone, about 2 MB) and
+`ghcr.io/docteurzoidberg/pixel-cast:ffmpeg` (with ffmpeg, for videos).
+
+```bash
+docker run --rm ghcr.io/docteurzoidberg/pixel-cast --host 192.0.2.50 --size 16x16 --duration 30s pattern grid
+
+# a target file in ./config/pixel-cast/targets.toml, a stable CID in the pixel-cast-data volume, videos from ./media
+docker run --rm -v "$PWD/config:/config:ro" -v pixel-cast-data:/data -v "$PWD/media:/media:ro" \
+  ghcr.io/docteurzoidberg/pixel-cast:ffmpeg -t wall video /media/clip.mp4
+```
+
+Unicast works from the default network; multicast needs `--network host` (Linux), and is unreliable from Docker
+Desktop. `docker stop` sends SIGTERM, which ends the stream cleanly.
 
 ## Quick start
 

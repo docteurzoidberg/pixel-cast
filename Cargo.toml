@@ -18,3 +18,8 @@ image = { version = "0.25.9", default-features = false, features = ["png", "jpeg
 serde = { version = "1.0.229", features = ["derive"] }
 socket2 = "0.6.5"
 toml = "1.2.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

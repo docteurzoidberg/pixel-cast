@@ -23,6 +23,7 @@ discovery packets (unicast; multicast from WSL does not reach Windows applicatio
 | First version | the command line: test patterns (one or several, animated, looping), still image, GIF and video (looping or once) |
 | Receiver modes | not pixel-cast's business: it sends E1.31, whatever the receiver does with it |
 | Wiring | pixel-cast puts pictures in the order the LEDs are wired (`layout`: rows or columns, straight or serpentine; `origin`: corner of the first LED). Decision of 2026-11-26, reversing a morning decision after tests on a real receiver: ESPHome's E1.31 effect takes values in LED order with no mapping, and a serpentine of columns (common 8 x 32 panels) cannot be remapped on the receiver at all |
+| Releases | our own GitHub Actions workflow rather than `cargo-dist` (decision of 2026-11-26): one binary with no C library builds simply on native runners, `cargo-dist`'s installers add little here, and the Docker images need a workflow anyway |
 | Colour order | the receiver's job: pixel-cast sends RGB (ESPHome, for one, sets the colour order of its strip) |
 
 ## First version: the command line
@@ -156,9 +157,12 @@ compares it with the source.
 
 ## Distribution
 
-- GitHub releases built with `cargo-dist`: Linux x86_64 and ARM64 with musl (static: PC, server, Raspberry Pi),
-  Windows, macOS.
-- A minimal Docker image (the binary alone), and a variant with ffmpeg.
+- GitHub releases built by our own workflow (`.github/workflows/release.yml`, on a `vX.Y.Z` tag): Linux x86_64 and
+  ARM64 with musl (static: PC, server, Raspberry Pi), Windows x86_64 (C runtime linked in), macOS ARM64 and x86_64;
+  archives with README and LICENSE, SHA-256 sums. Run by hand, the workflow builds everything and publishes nothing.
+- Docker images on `ghcr.io/docteurzoidberg/pixel-cast` for amd64 and arm64, built from the release's musl
+  binaries (`docker/Dockerfile`): `latest` and `X.Y.Z`, the binary alone on `scratch` (about 2 MB); `ffmpeg` and
+  `X.Y.Z-ffmpeg`, on Alpine with ffmpeg. Target file in `/config`, CID kept in `/data`.
 - `cargo install pixel-cast` once published on crates.io.
 
 ## Typical uses
@@ -192,7 +196,8 @@ caller that may start several streams should queue them itself.
 - [x] 4. Output and shutdown: `--json`, exit codes, `--duration`, clean end of stream, `--blackout`, `--dry-run`,
       `--priority`.
 - [ ] 5. Real tests: a software receiver first, then real hardware.
-- [ ] 6. Multi-platform releases (`cargo-dist`), Docker image, README (README written 2026-11-26).
+- [ ] 6. Multi-platform releases, Docker images, README (README, release workflow and Dockerfile written
+      2026-11-26; first release to tag).
 
 ## After the first version
 

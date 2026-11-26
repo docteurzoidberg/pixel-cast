@@ -6,3 +6,7 @@ CLAUDE.local.md
 
 # Copyrighted standards, kept locally only (see docs/standard/README.md)
 docs/standard/*.pdf
+
+# Binaries copied in to build the Docker images
+/docker/amd64/
+/docker/arm64/
