@@ -7,8 +7,10 @@ cron jobs, automation or agent servers) as much as by people.
 pixel-cast is standalone and generic: it knows E1.31 and the geometry of a matrix, nothing about the receiver behind
 them.
 
-**Status (2026-11-26)**: steps 1 and 2 done: the library sends pictures (E1.31 packets, universes, TOML targets,
-unicast and multicast, suppression of unchanged data); the command line is still a placeholder. Step 3 next.
+**Status (2026-11-26)**: steps 1 to 3 done: the command line streams test patterns, still images, GIFs and videos
+(ffmpeg) to unicast or multicast targets, with `--duration` and the exit codes ahead of step 4. Still missing from
+step 4: Ctrl+C and SIGTERM (they stop the process without the stream-terminated packets), `--json`, `--blackout`,
+`--dry-run`.
 
 ## Decisions
 
@@ -43,8 +45,18 @@ pixel-cast targets                                          # list the known tar
 | `gif <file>` | `image` crate, with each frame's delay | `--loop` (default) or `--once` |
 | `video <file>` | ffmpeg as a subprocess, raw RGB frames over a pipe | `--loop` or `--once` (default) |
 
-The patterns are for setting up a display: `universes` gives each universe its own colour, `grid` shows orientation
-and panel seams, `chase` lights one pixel after the other in index order (wiring), `color` tells two sources apart.
+The patterns are for setting up a display. They are computed from the target's geometry (size, universes, lights per
+universe), so they work at any size, and they move in seconds, not frames, so they look the same at any frame rate
+(decision of 2026-11-26):
+
+| Pattern | Shows |
+|---|---|
+| `universes` | each universe in its own colour, a white light running through every universe at once: universe boundaries |
+| `grid` | edges, a grid scaled to the size, a colour per corner and the centre, a sweeping line: orientation and cropping |
+| `gradient` | hue across, brightness down: colour order and dynamic range |
+| `plasma` | smooth motion, scaled to the size: frame rate and tearing |
+| `chase` | one light after the other in index order: the order lights are addressed in |
+| `color <rrggbb>` | one colour: tells two sources apart, checks white balance |
 
 ffmpeg is only needed for `video`: the binary stays static, and a clear message says what to install when it is
 missing.
@@ -97,7 +109,7 @@ priority = 100
 
 ```
 src/
-  main.rs        command line (clap), exit codes
+  main.rs        command line (clap), exit codes, the sending loop
   target.rs      TOML targets, merged with the options
   lib.rs         the modules below, as a library (tested on their own)
   geometry.rs    size and universes: RGB picture -> DMX values per universe
@@ -160,7 +172,7 @@ caller that may start several streams should queue them itself.
 - [x] 1. Create the `docteurzoidberg/pixel-cast` repository (public, MIT; Cargo, CI: fmt, clippy, tests).
 - [x] 2. Core: E1.31 packets, universe splitting (size and universes), TOML targets, unicast and multicast
       sending; byte-for-byte packet tests.
-- [ ] 3. Sources: test patterns (`--each` to chain several), still image, GIF (`--loop` / `--once`), video through
+- [x] 3. Sources: test patterns (`--each` to chain several), still image, GIF (`--loop` / `--once`), video through
       ffmpeg (`--loop` / `--once`), fitting.
 - [ ] 4. Output and shutdown: `--json`, exit codes, `--duration`, clean end of stream, `--blackout`, `--dry-run`,
       `--priority`.
