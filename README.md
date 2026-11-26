@@ -11,21 +11,29 @@ A command-line tool that streams test patterns, still images, GIFs and videos to
   end of stream.
 - For other programs: JSON status lines, stable exit codes, `--duration`, `--dry-run`, SIGTERM handled.
 
-**Status**: under development, no release yet: build it from source for now (below). See [`PLAN.md`](PLAN.md) for the
+**Status**: first release, 0.1.0; the command line and its output may still change before 1.0. See [`PLAN.md`](PLAN.md) for the
 design and the roadmap.
 
 ## Install
 
-From source, with a [Rust toolchain](https://rustup.rs) (1.85 or later):
+Download the archive for your system from the [latest release](https://github.com/docteurzoidberg/pixel-cast/releases/latest)
+and put `pixel-cast` (or `pixel-cast.exe`) somewhere on your `PATH`: Linux x86_64 and ARM64 (static, no dependency:
+PC, server, Raspberry Pi), Windows x86_64, macOS ARM64 and x86_64. `SHA256SUMS` lists the archives' checksums.
+
+```bash
+# Linux x86_64, for instance
+curl -LO https://github.com/docteurzoidberg/pixel-cast/releases/download/v0.1.0/pixel-cast-0.1.0-x86_64-unknown-linux-musl.tar.gz
+tar -xzf pixel-cast-0.1.0-x86_64-unknown-linux-musl.tar.gz
+sudo install pixel-cast-0.1.0-x86_64-unknown-linux-musl/pixel-cast /usr/local/bin/
+```
+
+Or from source, with a [Rust toolchain](https://rustup.rs) (1.85 or later):
 
 ```bash
 cargo install --git https://github.com/docteurzoidberg/pixel-cast
 ```
 
 Videos need [ffmpeg](https://ffmpeg.org/download.html) on the `PATH`; everything else works without it.
-
-Once released, each [release](https://github.com/docteurzoidberg/pixel-cast/releases) carries ready-made binaries:
-Linux x86_64 and ARM64 (static, no dependency: PC, server, Raspberry Pi), Windows x86_64, macOS ARM64 and x86_64.
 
 ### Docker
 

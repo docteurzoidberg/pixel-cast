@@ -7,7 +7,7 @@ cron jobs, automation or agent servers) as much as by people.
 pixel-cast is standalone and generic: it knows E1.31 and the geometry of a matrix, nothing about the receiver behind
 them.
 
-**Status (2026-11-26)**: steps 1 to 4 done; step 5 under way on a real receiver (an ESP32 with an 8 x 8 serpentine
+**Status (2026-11-26)**: steps 1 to 4 and 6 done, release 0.1.0 published; step 5 under way on a real receiver (an ESP32 with an 8 x 8 serpentine
 WS2812B matrix, ESPHome's E1.31 effect with source arbitration): takeover and end of sources, keep-alive of still
 pictures, priorities, Ctrl+C, and the serpentine wiring all work. sACNView lists the source from its universe
 discovery packets (unicast; multicast from WSL does not reach Windows applications on the same PC).
@@ -196,8 +196,7 @@ caller that may start several streams should queue them itself.
 - [x] 4. Output and shutdown: `--json`, exit codes, `--duration`, clean end of stream, `--blackout`, `--dry-run`,
       `--priority`.
 - [ ] 5. Real tests: a software receiver first, then real hardware.
-- [ ] 6. Multi-platform releases, Docker images, README (README, release workflow and Dockerfile written
-      2026-11-26; first release to tag).
+- [x] 6. Multi-platform releases, Docker images, README: release 0.1.0 on 2026-11-26.
 
 ## After the first version
 
