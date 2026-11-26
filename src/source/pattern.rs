@@ -163,8 +163,10 @@ fn universes(geometry: &Geometry, t: f64, canvas: &mut Canvas) {
     let lights = geometry.size().lights();
     let running = ((t / UNIVERSE_PASS).fract() * per_universe as f64) as usize;
     for light in 0..lights {
-        let universe = light / per_universe;
-        let rgb = if light % per_universe == running {
+        // universes carry LEDs in wiring order: colour each light by the universe of its LED
+        let led = geometry.led_of_light(light);
+        let universe = led / per_universe;
+        let rgb = if led % per_universe == running {
             [255, 255, 255]
         } else {
             // neighbours alternate brightness, so that two universes of close hues still part
@@ -178,16 +180,29 @@ fn universes(geometry: &Geometry, t: f64, canvas: &mut Canvas) {
 /// Seconds the sweeping line of `grid` takes to cross the matrix.
 const SWEEP: f64 = 4.0;
 
+/// Distance from the centre line of a side `n` long: on an even side the centre falls between two lights, which
+/// both count as the centre (distance 0), so that lines drawn at equal distances stay symmetric.
+fn from_centre(i: usize, n: usize) -> usize {
+    let half = n / 2;
+    if n % 2 == 1 {
+        i.abs_diff(half)
+    } else if i >= half {
+        i - half
+    } else {
+        half - 1 - i
+    }
+}
+
 fn grid(w: usize, h: usize, t: f64, canvas: &mut Canvas) {
     let short = w.min(h);
-    // about eight cells along the short side, never finer than every 4 lights
+    // about eight cells along the short side, never finer than every 4 lights; lines start from the centre
     let step = (short / 8).max(4);
     let edge = [255, 80, 0];
     let line = [30, 110, 30];
     for y in 0..h {
         for x in 0..w {
             let on_edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
-            let on_line = x % step == 0 || y % step == 0;
+            let on_line = from_centre(x, w) % step == 0 || from_centre(y, h) % step == 0;
             canvas.put(
                 x,
                 y,
@@ -411,6 +426,46 @@ mod tests {
         assert_eq!(pixel(&frame, 40, 39, 19), [255, 255, 255]);
         assert_eq!(pixel(&frame, 40, 19, 9), [255, 255, 0]);
         assert_eq!(pixel(&frame, 40, 20, 5), [255, 255, 255]);
+    }
+
+    #[test]
+    fn grid_is_symmetric_about_the_centre() {
+        for (w, h) in [(8u32, 8u32), (16, 16), (32, 8), (7, 5), (192, 64), (9, 4)] {
+            let geometry = geometry(w, h, 170);
+            let mut frame = vec![0; geometry.frame_len()];
+            Pattern::Grid.draw(&geometry, 0.0, &mut frame); // the sweep at x = 0, on the edge
+            let corner = |x: u32, y: u32| {
+                let mark = (w.min(h) / 10).max(1);
+                (x < mark || x >= w - mark) && (y < mark || y >= h - mark)
+            };
+            for y in 0..h {
+                for x in 1..w - 1 {
+                    if corner(x, y) || corner(w - 1 - x, y) || corner(x, h - 1 - y) {
+                        continue;
+                    }
+                    let here = pixel(&frame, w, x, y);
+                    assert_eq!(
+                        here,
+                        pixel(&frame, w, w - 1 - x, y),
+                        "{w}x{h}: ({x}, {y}) left-right"
+                    );
+                    assert_eq!(
+                        here,
+                        pixel(&frame, w, x, h - 1 - y),
+                        "{w}x{h}: ({x}, {y}) top-bottom"
+                    );
+                }
+            }
+        }
+        // 8x8: the centre cross is two lights wide, on lights 3 and 4
+        let geometry = geometry(8, 8, 170);
+        let mut frame = vec![0; geometry.frame_len()];
+        Pattern::Grid.draw(&geometry, 0.0, &mut frame);
+        let line = [30, 110, 30];
+        assert_eq!(pixel(&frame, 8, 3, 1), line);
+        assert_eq!(pixel(&frame, 8, 4, 1), line);
+        assert_eq!(pixel(&frame, 8, 2, 1), [0, 0, 0]);
+        assert_eq!(pixel(&frame, 8, 1, 3), line);
     }
 
     #[test]

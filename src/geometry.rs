@@ -1,8 +1,9 @@
-//! Size of a matrix and its split into universes.
+//! Size of a matrix, its wiring and its split into universes.
 //!
-//! A picture is RGB, three bytes per light, lights in rows from the top-left corner (index = y × width + x). Each
-//! universe carries `lights_per_universe` lights; the last one carries what is left. Mapping lights to the
-//! physical wiring is the receiver's job.
+//! A picture is RGB, three bytes per light, lights in rows from the top-left corner (index = y × width + x). The
+//! wiring says in which order the LEDs follow each other (rows or columns, straight or serpentine, from which
+//! corner): before sending, a picture is put in that order. Each universe then carries `lights_per_universe` LEDs;
+//! the last one carries what is left.
 
 use std::fmt;
 use std::str::FromStr;
@@ -55,6 +56,7 @@ pub struct Geometry {
     size: Size,
     first_universe: u16,
     lights_per_universe: u16,
+    wiring: Wiring,
 }
 
 impl Geometry {
@@ -76,6 +78,7 @@ impl Geometry {
             size,
             first_universe,
             lights_per_universe,
+            wiring: Wiring::default(),
         };
         let last = first_universe as usize + geometry.universe_count() - 1;
         if last > *sacn::UNIVERSES.end() as usize {
@@ -87,8 +90,84 @@ impl Geometry {
         Ok(geometry)
     }
 
+    /// The same geometry with LEDs wired as `wiring`.
+    pub fn with_wiring(self, wiring: Wiring) -> Self {
+        Geometry { wiring, ..self }
+    }
+
     pub fn size(&self) -> Size {
         self.size
+    }
+
+    pub fn wiring(&self) -> Wiring {
+        self.wiring
+    }
+
+    /// The light (index in a picture, y × width + x) that LED `led` shows.
+    pub fn light_of_led(&self, led: usize) -> usize {
+        let (w, h) = (self.size.width as usize, self.size.height as usize);
+        let serpentine = self.wiring.layout.is_serpentine();
+        // coordinates as seen from the origin corner
+        let (cx, cy) = if self.wiring.layout.is_columns() {
+            let (column, along) = (led / h, led % h);
+            (
+                column,
+                if serpentine && column % 2 == 1 {
+                    h - 1 - along
+                } else {
+                    along
+                },
+            )
+        } else {
+            let (row, along) = (led / w, led % w);
+            (
+                if serpentine && row % 2 == 1 {
+                    w - 1 - along
+                } else {
+                    along
+                },
+                row,
+            )
+        };
+        let (x, y) = self.wiring.origin.flip(cx, cy, w, h);
+        y * w + x
+    }
+
+    /// The LED that shows light `light` (index in a picture, y × width + x).
+    pub fn led_of_light(&self, light: usize) -> usize {
+        let (w, h) = (self.size.width as usize, self.size.height as usize);
+        let serpentine = self.wiring.layout.is_serpentine();
+        let (cx, cy) = self.wiring.origin.flip(light % w, light / w, w, h);
+        if self.wiring.layout.is_columns() {
+            cx * h
+                + if serpentine && cx % 2 == 1 {
+                    h - 1 - cy
+                } else {
+                    cy
+                }
+        } else {
+            cy * w
+                + if serpentine && cy % 2 == 1 {
+                    w - 1 - cx
+                } else {
+                    cx
+                }
+        }
+    }
+
+    /// `frame` (a picture) in wiring order, in `out`; `None` when the wiring is the picture's own order (rows from
+    /// the top-left corner), so that `frame` goes out as it is.
+    pub fn to_wiring_order<'a>(&self, frame: &'a [u8], out: &'a mut Vec<u8>) -> &'a [u8] {
+        if self.wiring == Wiring::default() {
+            return frame;
+        }
+        out.clear();
+        out.reserve(frame.len());
+        for led in 0..self.size.lights() {
+            let at = self.light_of_led(led) * CHANNELS_PER_LIGHT;
+            out.extend_from_slice(&frame[at..at + CHANNELS_PER_LIGHT]);
+        }
+        out
     }
 
     pub fn first_universe(&self) -> u16 {
@@ -116,7 +195,8 @@ impl Geometry {
         (0..self.universe_count()).map(move |i| first + i as u16)
     }
 
-    /// Splits an RGB picture into `(universe, DMX values)`, the values borrowed from `frame`.
+    /// Splits LED values in wiring order (see [`to_wiring_order`](Self::to_wiring_order)) into `(universe, DMX
+    /// values)`, the values borrowed from `frame`.
     ///
     /// Panics if `frame` is not [`frame_len`](Self::frame_len) bytes long: pictures are fitted to the matrix
     /// before they get here.
@@ -133,6 +213,116 @@ impl Geometry {
     }
 }
 
+/// The order LEDs follow each other in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Wiring {
+    pub layout: Layout,
+    /// The corner of the first LED.
+    pub origin: Origin,
+}
+
+/// How LEDs run across the matrix, from the origin corner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layout {
+    /// Row after row, each in the same direction.
+    #[default]
+    Rows,
+    /// Row after row, every other one running back.
+    SerpentineRows,
+    /// Column after column, each in the same direction.
+    Columns,
+    /// Column after column, every other one running back.
+    SerpentineColumns,
+}
+
+impl Layout {
+    pub const NAMES: [&str; 4] = ["rows", "serpentine-rows", "columns", "serpentine-columns"];
+
+    fn is_serpentine(self) -> bool {
+        matches!(self, Layout::SerpentineRows | Layout::SerpentineColumns)
+    }
+
+    fn is_columns(self) -> bool {
+        matches!(self, Layout::Columns | Layout::SerpentineColumns)
+    }
+}
+
+impl FromStr for Layout {
+    type Err = GeometryError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(match text {
+            "rows" => Layout::Rows,
+            "serpentine-rows" => Layout::SerpentineRows,
+            "columns" => Layout::Columns,
+            "serpentine-columns" => Layout::SerpentineColumns,
+            _ => return Err(GeometryError::Layout(text.to_owned())),
+        })
+    }
+}
+
+impl fmt::Display for Layout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = Layout::NAMES;
+        f.write_str(match self {
+            Layout::Rows => names[0],
+            Layout::SerpentineRows => names[1],
+            Layout::Columns => names[2],
+            Layout::SerpentineColumns => names[3],
+        })
+    }
+}
+
+/// The corner of the first LED, seen from the front of the matrix.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Origin {
+    #[default]
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl Origin {
+    pub const NAMES: [&str; 4] = ["top-left", "top-right", "bottom-left", "bottom-right"];
+
+    /// Coordinates seen from this corner to coordinates from the top-left corner, and back (the same flips).
+    fn flip(self, x: usize, y: usize, width: usize, height: usize) -> (usize, usize) {
+        let right = matches!(self, Origin::TopRight | Origin::BottomRight);
+        let bottom = matches!(self, Origin::BottomLeft | Origin::BottomRight);
+        (
+            if right { width - 1 - x } else { x },
+            if bottom { height - 1 - y } else { y },
+        )
+    }
+}
+
+impl FromStr for Origin {
+    type Err = GeometryError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(match text {
+            "top-left" => Origin::TopLeft,
+            "top-right" => Origin::TopRight,
+            "bottom-left" => Origin::BottomLeft,
+            "bottom-right" => Origin::BottomRight,
+            _ => return Err(GeometryError::Origin(text.to_owned())),
+        })
+    }
+}
+
+impl fmt::Display for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = Origin::NAMES;
+        f.write_str(match self {
+            Origin::TopLeft => names[0],
+            Origin::TopRight => names[1],
+            Origin::BottomLeft => names[2],
+            Origin::BottomRight => names[3],
+        })
+    }
+}
+
 /// A size or universe layout that cannot be sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GeometryError {
@@ -140,6 +330,8 @@ pub enum GeometryError {
     LightsPerUniverse(u16),
     FirstUniverse(u16),
     TooManyUniverses { first: u16, count: usize },
+    Layout(String),
+    Origin(String),
 }
 
 impl fmt::Display for GeometryError {
@@ -166,6 +358,12 @@ impl fmt::Display for GeometryError {
                 "{count} universes from universe {first} go past universe {}",
                 sacn::UNIVERSES.end()
             ),
+            GeometryError::Layout(text) => {
+                write!(f, "unknown layout {text:?}: {}", Layout::NAMES.join(", "))
+            }
+            GeometryError::Origin(text) => {
+                write!(f, "unknown origin {text:?}: {}", Origin::NAMES.join(", "))
+            }
         }
     }
 }
@@ -238,6 +436,127 @@ mod tests {
     #[should_panic(expected = "a 192x64 picture has 36864 bytes")]
     fn split_refuses_a_frame_of_another_size() {
         let _ = wall().split(&[0; 3]).count();
+    }
+
+    fn wired(width: u32, height: u32, layout: Layout, origin: Origin) -> Geometry {
+        Geometry::new(Size { width, height }, 1, 170)
+            .unwrap()
+            .with_wiring(Wiring { layout, origin })
+    }
+
+    /// The light (x, y) of each LED, in LED order.
+    fn path(geometry: &Geometry) -> Vec<(usize, usize)> {
+        let w = geometry.size().width as usize;
+        (0..geometry.size().lights())
+            .map(|led| {
+                let light = geometry.light_of_led(led);
+                (light % w, light / w)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn wirings_follow_their_layout_from_their_corner() {
+        use Layout::*;
+        use Origin::*;
+        assert_eq!(
+            path(&wired(3, 2, Rows, TopLeft)),
+            [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)]
+        );
+        assert_eq!(
+            path(&wired(3, 2, SerpentineRows, TopLeft)),
+            [(0, 0), (1, 0), (2, 0), (2, 1), (1, 1), (0, 1)]
+        );
+        assert_eq!(
+            path(&wired(3, 2, SerpentineRows, BottomRight)),
+            [(2, 1), (1, 1), (0, 1), (0, 0), (1, 0), (2, 0)]
+        );
+        assert_eq!(
+            path(&wired(3, 2, Columns, TopRight)),
+            [(2, 0), (2, 1), (1, 0), (1, 1), (0, 0), (0, 1)]
+        );
+        assert_eq!(
+            path(&wired(3, 2, SerpentineColumns, BottomLeft)),
+            [(0, 1), (0, 0), (1, 0), (1, 1), (2, 1), (2, 0)]
+        );
+    }
+
+    #[test]
+    fn every_wiring_is_a_permutation_and_led_of_light_inverts_it() {
+        let layouts = [
+            Layout::Rows,
+            Layout::SerpentineRows,
+            Layout::Columns,
+            Layout::SerpentineColumns,
+        ];
+        let origins = [
+            Origin::TopLeft,
+            Origin::TopRight,
+            Origin::BottomLeft,
+            Origin::BottomRight,
+        ];
+        for (w, h) in [(1, 1), (8, 8), (32, 8), (7, 3), (1, 5)] {
+            for layout in layouts {
+                for origin in origins {
+                    let geometry = wired(w, h, layout, origin);
+                    let lights = geometry.size().lights();
+                    let mut seen = vec![false; lights];
+                    for led in 0..lights {
+                        let light = geometry.light_of_led(led);
+                        assert!(
+                            !seen[light],
+                            "{layout} {origin} {w}x{h}: light {light} twice"
+                        );
+                        seen[light] = true;
+                        assert_eq!(geometry.led_of_light(light), led);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_column_serpentine_32_by_8_panel_matches_its_usual_pixel_mapper() {
+        // the mapping usually given for these panels: led = x × 8 + y on even columns, x × 8 + 7 − y on odd ones
+        let geometry = wired(32, 8, Layout::SerpentineColumns, Origin::TopLeft);
+        for y in 0..8 {
+            for x in 0..32 {
+                let led = if x % 2 == 0 {
+                    x * 8 + y
+                } else {
+                    x * 8 + (7 - y)
+                };
+                assert_eq!(geometry.led_of_light(y * 32 + x), led, "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn frames_are_reordered_only_when_the_wiring_needs_it() {
+        let frame: Vec<u8> = (0..18).collect(); // 3x2: lights 0..6, three bytes each
+        let mut out = Vec::new();
+        let straight = wired(3, 2, Layout::Rows, Origin::TopLeft);
+        assert_eq!(
+            straight.to_wiring_order(&frame, &mut out).as_ptr(),
+            frame.as_ptr()
+        );
+        let serpentine = wired(3, 2, Layout::SerpentineRows, Origin::TopLeft);
+        assert_eq!(
+            serpentine.to_wiring_order(&frame, &mut out),
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 17, 12, 13, 14, 9, 10, 11]
+        );
+    }
+
+    #[test]
+    fn layouts_and_origins_read_and_print() {
+        for name in Layout::NAMES {
+            assert_eq!(name.parse::<Layout>().unwrap().to_string(), name);
+        }
+        for name in Origin::NAMES {
+            assert_eq!(name.parse::<Origin>().unwrap().to_string(), name);
+        }
+        assert!("zigzag".parse::<Layout>().is_err());
+        assert!("left".parse::<Origin>().is_err());
     }
 
     #[test]

@@ -144,3 +144,23 @@ fn unchanged_frames_are_suppressed_then_kept_alive_and_the_end_is_signalled() {
     let last_of_2 = ends.iter().find(|p| p.universe == 2).unwrap();
     assert_eq!(*last_of_2.values.last().unwrap(), 99);
 }
+
+#[test]
+fn a_serpentine_matrix_receives_its_leds_in_wiring_order() {
+    let receiver = Receiver::bind();
+    let spec = TargetSpec {
+        host: Some(Hosts::One("127.0.0.1".into())),
+        port: Some(receiver.port()),
+        size: Some("3x2".into()),
+        layout: Some("serpentine-rows".into()),
+        ..TargetSpec::default()
+    };
+    let mut stream = Stream::open(&spec.resolve(Cid([9; 16])).unwrap()).unwrap();
+    // light n of the picture (rows from the top-left) is (n, n, n)
+    let frame: Vec<u8> = (0..6u8).flat_map(|n| [n; 3]).collect();
+    stream.send_frame(&frame, Instant::now());
+    let packet = receiver.receive(1).remove(0);
+    let leds: Vec<u8> = packet.values.chunks(3).map(|rgb| rgb[0]).collect();
+    // the second row runs back: LEDs 3, 4, 5 show lights 5, 4, 3
+    assert_eq!(leds, [0, 1, 2, 5, 4, 3]);
+}

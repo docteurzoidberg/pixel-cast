@@ -6,6 +6,8 @@
 //! size = "192x64"
 //! universe = 1
 //! lights_per_universe = 170
+//! layout = "rows"            # rows, serpentine-rows, columns, serpentine-columns
+//! origin = "top-left"        # corner of the first LED
 //! fps = 30
 //! priority = 100
 //! ```
@@ -17,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::geometry::{Geometry, GeometryError, Size};
+use crate::geometry::{Geometry, GeometryError, Layout, Origin, Size, Wiring};
 use crate::sacn::{self, Cid, HeaderError, Source};
 
 pub const DEFAULT_UNIVERSE: u16 = 1;
@@ -45,6 +47,10 @@ pub struct TargetSpec {
     /// First universe.
     pub universe: Option<u16>,
     pub lights_per_universe: Option<u16>,
+    /// How LEDs run: `rows`, `serpentine-rows`, `columns`, `serpentine-columns`.
+    pub layout: Option<String>,
+    /// Corner of the first LED: `top-left`, `top-right`, `bottom-left`, `bottom-right`.
+    pub origin: Option<String>,
     pub fps: Option<f64>,
     pub priority: Option<u8>,
     pub source_name: Option<String>,
@@ -79,6 +85,8 @@ impl TargetSpec {
             size: self.size.or(fallback.size),
             universe: self.universe.or(fallback.universe),
             lights_per_universe: self.lights_per_universe.or(fallback.lights_per_universe),
+            layout: self.layout.or(fallback.layout),
+            origin: self.origin.or(fallback.origin),
             fps: self.fps.or(fallback.fps),
             priority: self.priority.or(fallback.priority),
             source_name: self.source_name.or(fallback.source_name),
@@ -105,12 +113,23 @@ impl TargetSpec {
             (false, None) => return Err(TargetError::NoDestination),
         };
         let size: Size = self.size.as_deref().ok_or(TargetError::NoSize)?.parse()?;
+        let wiring = Wiring {
+            layout: match &self.layout {
+                Some(layout) => layout.parse()?,
+                None => Layout::default(),
+            },
+            origin: match &self.origin {
+                Some(origin) => origin.parse()?,
+                None => Origin::default(),
+            },
+        };
         let geometry = Geometry::new(
             size,
             self.universe.unwrap_or(DEFAULT_UNIVERSE),
             self.lights_per_universe
                 .unwrap_or(DEFAULT_LIGHTS_PER_UNIVERSE),
-        )?;
+        )?
+        .with_wiring(wiring);
         let fps = self.fps.unwrap_or(DEFAULT_FPS);
         if !(fps > 0.0 && fps <= MAX_FPS) {
             return Err(TargetError::Fps(fps));
@@ -318,6 +337,12 @@ mod tests {
         fps = 44.5
         source_name = "studio"
 
+        [panel]
+        host = "192.0.2.30"
+        size = "32x8"
+        layout = "serpentine-columns"
+        origin = "bottom-right"
+
         [group]
         multicast = true
         ttl = 4
@@ -334,7 +359,7 @@ mod tests {
         let targets = Targets::parse(FILE).unwrap();
         assert_eq!(
             targets.names().collect::<Vec<_>>(),
-            ["group", "pair", "wall"]
+            ["group", "pair", "panel", "wall"]
         );
 
         let wall = targets.get("wall").unwrap().resolve(cid()).unwrap();
@@ -364,6 +389,16 @@ mod tests {
         assert_eq!(pair.geometry.universes().collect::<Vec<_>>(), [10, 11]);
         assert_eq!(pair.fps, 44.5);
         assert_eq!(pair.source.name(), "studio");
+
+        assert_eq!(wall.geometry.wiring(), Wiring::default());
+        let panel = targets.get("panel").unwrap().resolve(cid()).unwrap();
+        assert_eq!(
+            panel.geometry.wiring(),
+            Wiring {
+                layout: Layout::SerpentineColumns,
+                origin: Origin::BottomRight
+            }
+        );
 
         let group = targets.get("group").unwrap().resolve(cid()).unwrap();
         assert_eq!(
@@ -437,12 +472,20 @@ mod tests {
             resolve("[t]\nhost = \"h\"\nsize = \"8x8\"\npriority = 201"),
             Err(TargetError::Header(HeaderError::Priority(201)))
         ));
+        assert!(matches!(
+            resolve("[t]\nhost = \"h\"\nsize = \"8x8\"\nlayout = \"zigzag\""),
+            Err(TargetError::Geometry(GeometryError::Layout(_)))
+        ));
+        assert!(matches!(
+            resolve("[t]\nhost = \"h\"\nsize = \"8x8\"\norigin = \"centre\""),
+            Err(TargetError::Geometry(GeometryError::Origin(_)))
+        ));
         // unknown keys are typos, not silently ignored
         assert!(Targets::parse("[t]\nhots = \"h\"").is_err());
         let unknown = Targets::parse(FILE).unwrap().get("nope").unwrap_err();
         assert_eq!(
             unknown.to_string(),
-            "unknown target \"nope\"; known targets: group, pair, wall"
+            "unknown target \"nope\"; known targets: group, pair, panel, wall"
         );
     }
 

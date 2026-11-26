@@ -7,9 +7,9 @@ cron jobs, automation or agent servers) as much as by people.
 pixel-cast is standalone and generic: it knows E1.31 and the geometry of a matrix, nothing about the receiver behind
 them.
 
-**Status (2026-11-26)**: steps 1 to 4 done: the command line streams test patterns, still images, GIFs and videos,
-ends cleanly on Ctrl+C or SIGTERM, reports in JSON for other programs, and has a dry run. Sample files in
-`samples/`. Step 5 (tests on real receivers) next.
+**Status (2026-11-26)**: steps 1 to 4 done; step 5 under way on a real receiver (an ESP32 with an 8 x 8 serpentine
+WS2812B matrix, ESPHome's E1.31 effect with source arbitration): takeover and end of sources, keep-alive of still
+pictures, priorities, Ctrl+C, and the serpentine wiring all work.
 
 ## Decisions
 
@@ -21,7 +21,8 @@ ends cleanly on Ctrl+C or SIGTERM, reports in JSON for other programs, and has a
 | Language of the repository | English everywhere: code, comments, messages, documentation, commits |
 | First version | the command line: test patterns (one or several, animated, looping), still image, GIF and video (looping or once) |
 | Receiver modes | not pixel-cast's business: it sends E1.31, whatever the receiver does with it |
-| Wiring and colour order | the receiver's job (decision of 2026-11-26): pixel-cast always sends rows from the top-left corner, in RGB; wiring options wait until a receiver needs them (see "After the first version") |
+| Wiring | pixel-cast puts pictures in the order the LEDs are wired (`layout`: rows or columns, straight or serpentine; `origin`: corner of the first LED). Decision of 2026-11-26, reversing a morning decision after tests on a real receiver: ESPHome's E1.31 effect takes values in LED order with no mapping, and a serpentine of columns (common 8 x 32 panels) cannot be remapped on the receiver at all |
+| Colour order | the receiver's job: pixel-cast sends RGB (ESPHome, for one, sets the colour order of its strip) |
 
 ## First version: the command line
 
@@ -50,11 +51,11 @@ universe), so they work at any size, and they move in seconds, not frames, so th
 
 | Pattern | Shows |
 |---|---|
-| `universes` | each universe in its own colour, a white light running through every universe at once: universe boundaries |
-| `grid` | edges, a grid scaled to the size, a colour per corner and the centre, a sweeping line: orientation and cropping |
+| `universes` | each universe in its own colour, a white light running through every universe at once (in LED order): universe boundaries |
+| `grid` | edges, a grid scaled to the size and drawn from the centre (on an even side the centre lines are two lights wide), a colour per corner and the centre, a sweeping line: orientation and cropping |
 | `gradient` | hue across, brightness down: colour order and dynamic range |
 | `plasma` | smooth motion, scaled to the size: frame rate and tearing |
-| `chase` | one light after the other in index order: the order lights are addressed in |
+| `chase` | one light after the other in reading order: once the wiring is right, it runs row by row from the top-left |
 | `color <rrggbb>` | one colour: tells two sources apart, checks white balance |
 
 ffmpeg is only needed for `video`: the binary stays static, and a clear message says what to install when it is
@@ -72,15 +73,17 @@ port = 5568
 size = "192x64"
 universe = 1               # first universe
 lights_per_universe = 170
+layout = "rows"            # rows, serpentine-rows, columns, serpentine-columns
+origin = "top-left"        # corner of the first LED: top-left, top-right, bottom-left, bottom-right
 fps = 30
 priority = 100
 ```
 
 ### Sending
 
-- **Packets**: E1.31-2025 data packets (Table 4-1; see `docs/standard/README.md`); the picture is split into universes of `lights_per_universe` lights, three
-  channels (R, G, B) each, light index = y × width + x from the top-left corner (the usual layout of E1.31 matrix
-  receivers; mapping to the physical wiring is the receiver's job).
+- **Packets**: E1.31-2025 data packets (Table 4-1; see `docs/standard/README.md`). Pictures are made in rows from
+  the top-left corner, put in the order of the wiring (`layout`, `origin`; plain rows from the top-left by default),
+  then split into universes of `lights_per_universe` LEDs, three channels (R, G, B) each.
 - **Destination**: unicast (one or more addresses) or multicast (`239.255.<hi>.<lo>` per universe), configurable TTL
   and outgoing interface.
 - **Header**: source name (`--source-name`, default `pixel-cast`), priority (`--priority`, default 100), a CID that
@@ -115,7 +118,7 @@ src/
   main.rs        command line (clap), exit codes, the sending loop
   target.rs      TOML targets, merged with the options
   lib.rs         the modules below, as a library (tested on their own)
-  geometry.rs    size and universes: RGB picture -> DMX values per universe
+  geometry.rs    size, wiring and universes: RGB picture -> LED order -> DMX values per universe
   sacn.rs        E1.31 packets (data, stream terminated), sequences, CID
   sender.rs      sockets (socket2): unicast, multicast, TTL, interface
   clock.rs       fixed-deadline pacing
@@ -189,8 +192,7 @@ caller that may start several streams should queue them itself.
 
 ## After the first version
 
-- Wiring and colour order on the sender's side, for receivers that pour DMX channels straight into a strip:
-  `layout` (rows, serpentine), origin, flip, rotate, `channels` (rgb, grb, rgbw…).
+- Colour order on the sender's side (`channels`: grb, rgbw…), for receivers that cannot set it; rotation.
 - Raw frames on stdin (`pixel-cast -t wall raw --stdin`), for picture generators.
 - Server mode: JSON commands (show, colour, stop) on stdin or over HTTP, one process for many streams.
 - MCP server: pixel-cast as an agent's own tool.

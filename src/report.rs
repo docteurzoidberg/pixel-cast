@@ -231,6 +231,12 @@ pub fn dry_run(json: bool, target: &Target, source: &str) {
     let _ = writeln!(text, "size: {}", geometry.size());
     let _ = writeln!(
         text,
+        "wiring: {}, first LED {}",
+        geometry.wiring().layout,
+        geometry.wiring().origin
+    );
+    let _ = writeln!(
+        text,
         "universes: {first}-{last} ({per_universe} lights each, {in_last} in the last)"
     );
     let _ = writeln!(text, "frame rate: {fps} fps");
@@ -285,8 +291,14 @@ pub fn describe(target: &Target) -> String {
     } else {
         format!("universes {first}-{last}")
     };
+    let wiring = geometry.wiring();
+    let wiring = if wiring == Default::default() {
+        String::new()
+    } else {
+        format!(", {} from {}", wiring.layout, wiring.origin)
+    };
     format!(
-        "{}; {} in {universes} of {} lights; {} fps; priority {}",
+        "{}; {}{wiring} in {universes} of {} lights; {} fps; priority {}",
         destination(&target.destination),
         geometry.size(),
         geometry.lights_per_universe(),
@@ -316,6 +328,8 @@ fn target_fields(event: &mut Json, target: &Target) {
     }
     let geometry = target.geometry;
     event.str("size", &geometry.size().to_string());
+    event.str("layout", &geometry.wiring().layout.to_string());
+    event.str("origin", &geometry.wiring().origin.to_string());
     event.int("first_universe", geometry.first_universe().into());
     event.int("universes", geometry.universe_count() as u64);
     event.int("lights_per_universe", geometry.lights_per_universe().into());

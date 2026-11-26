@@ -63,6 +63,12 @@ struct Cli {
     /// Lights per universe, three channels each [default: 170].
     #[arg(long, global = true, value_name = "N")]
     lights_per_universe: Option<u16>,
+    /// How LEDs run: rows, serpentine-rows, columns or serpentine-columns [default: rows].
+    #[arg(long, global = true)]
+    layout: Option<String>,
+    /// Corner of the first LED: top-left, top-right, bottom-left or bottom-right [default: top-left].
+    #[arg(long, global = true, value_name = "CORNER")]
+    origin: Option<String>,
     /// Frames per second [default: 30].
     #[arg(long, global = true)]
     fps: Option<f64>,
@@ -351,6 +357,8 @@ fn resolve_target(cli: &Cli, reporter: &mut Reporter) -> Result<Target, Failure>
         size: cli.size.clone(),
         universe: cli.universe,
         lights_per_universe: cli.lights_per_universe,
+        layout: cli.layout.clone(),
+        origin: cli.origin.clone(),
         fps: cli.fps,
         priority: cli.priority,
         source_name: cli.source_name.clone(),

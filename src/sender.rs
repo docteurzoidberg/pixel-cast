@@ -208,6 +208,8 @@ pub struct Stream {
     geometry: Geometry,
     universes: Vec<UniverseState>,
     buffer: Vec<u8>,
+    /// The frame in wiring order, when the wiring is not the picture's own order.
+    wired: Vec<u8>,
     last_error: Option<SendError>,
 }
 
@@ -227,6 +229,7 @@ impl Stream {
             geometry,
             universes: geometry.universes().map(UniverseState::new).collect(),
             buffer: Vec::with_capacity(sacn::HEADER_LEN + sacn::MAX_CHANNELS),
+            wired: Vec::new(),
             last_error: None,
         }
     }
@@ -252,12 +255,15 @@ impl Stream {
         ok > 0
     }
 
-    /// Sends an RGB picture of the stream's size, as of `now`: each universe whose data changed, or that is due a
+    /// Sends an RGB picture of the stream's size (rows from the top-left corner, put in wiring order here), as of
+    /// `now`: each universe whose data changed, or that is due a
     /// repeat or a keep-alive.
     ///
     /// A universe whose packet could not be sent at all is sent again at the next call.
     pub fn send_frame(&mut self, frame: &[u8], now: Instant) -> Sent {
         let mut sent = Sent::default();
+        let mut wired = std::mem::take(&mut self.wired);
+        let frame = self.geometry.to_wiring_order(frame, &mut wired);
         for (i, (universe, values)) in self.geometry.split(frame).enumerate() {
             let state = &mut self.universes[i];
             debug_assert_eq!(state.universe, universe);
@@ -279,6 +285,7 @@ impl Stream {
                 self.universes[i].record(values, now);
             }
         }
+        self.wired = wired;
         sent
     }
 
